@@ -198,12 +198,17 @@ export const QuickPanelView: React.FC<Props> = ({ setInputText }) => {
       setHistoryPanel([])
       scrollTriggerRef.current = 'initial'
 
+      // Define the type of pop-up window for which text does not need to be deleted  ThinkingButton  WebSearchButton KnowledgeBaseButton  QuickPhrasesButton MCPToolsButton MCPToolsButton MCPToolsButton
+      const noTextDeletionPanels = ['thinking', '?', '#', 'quick-phrases', 'mcp', 'mcp-prompt', 'mcp-resource']
+
+      const shouldNotDeleteText = noTextDeletionPanels.includes(ctx.symbol)
+
       if (action === 'delete-symbol') {
         const textArea = document.querySelector('.inputbar textarea') as HTMLTextAreaElement
         if (textArea) {
           setInputText(textArea.value)
         }
-      } else if (action && !['outsideclick', 'esc', 'enter_empty'].includes(action)) {
+      } else if (action && !['outsideclick', 'esc', 'enter_empty'].includes(action) && !shouldNotDeleteText) {
         clearSearchText(true)
       }
     },
