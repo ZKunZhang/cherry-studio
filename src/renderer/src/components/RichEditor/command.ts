@@ -579,6 +579,16 @@ export const commandSuggestion: Omit<SuggestionOptions<Command, MentionNodeAttrs
     }
   },
 
+  onKeyDown: ({ event, editor }) => {
+    if (event.key === 'Enter' && event.shiftKey) {
+      event.preventDefault()
+      editor.chain().focus().insertContent('\n').run()
+      return true
+    }
+
+    return false
+  },
+
   render: () => {
     let component: ReactRenderer<any, any>
     let cleanup: (() => void) | undefined
