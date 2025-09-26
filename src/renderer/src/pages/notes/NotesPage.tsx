@@ -55,8 +55,36 @@ const NotesPage: FC = () => {
   const lastContentRef = useRef<string>('')
   const lastFilePathRef = useRef<string | undefined>(undefined)
   const isInitialSortApplied = useRef(false)
-  const isRenamingRef = useRef(false)
-  const isCreatingNoteRef = useRef(false)
+  // 操作状态管理 - 统一管理所有可能干扰文件监听的操作
+  const pendingOperationsRef = useRef(new Set<string>())
+
+  // 操作管理工具函数
+  const createOperationManager = useCallback(() => {
+    const addOperation = (operationId: string) => {
+      pendingOperationsRef.current.add(operationId)
+      logger.debug('Operation started:', { operationId, totalOperations: pendingOperationsRef.current.size })
+    }
+
+    const removeOperation = (operationId: string) => {
+      pendingOperationsRef.current.delete(operationId)
+      logger.debug('Operation completed:', { operationId, totalOperations: pendingOperationsRef.current.size })
+    }
+
+    const hasPendingOperations = () => pendingOperationsRef.current.size > 0
+
+    const withOperation = async <T extends unknown>(operationId: string, operation: () => Promise<T>): Promise<T> => {
+      addOperation(operationId)
+      try {
+        return await operation()
+      } finally {
+        removeOperation(operationId)
+      }
+    }
+
+    return { addOperation, removeOperation, hasPendingOperations, withOperation }
+  }, [])
+
+  const operationManager = createOperationManager()
 
   useEffect(() => {
     const updateCharCount = () => {
@@ -153,9 +181,9 @@ const NotesPage: FC = () => {
   useEffect(() => {
     if (notesTree.length === 0) return
     // 如果有activeFilePath但找不到对应节点，清空选择
-    // 但要排除正在同步树结构、重命名或创建笔记的情况，避免在这些操作中误清空
+    // 但要排除正在同步树结构或有待处理操作的情况，避免在这些操作中误清空
     const shouldClearPath =
-      activeFilePath && !activeNode && !isSyncingTreeRef.current && !isRenamingRef.current && !isCreatingNoteRef.current
+      activeFilePath && !activeNode && !isSyncingTreeRef.current && !operationManager.hasPendingOperations()
 
     if (shouldClearPath) {
       logger.warn('Clearing activeFilePath - node not found in tree', {
@@ -164,7 +192,7 @@ const NotesPage: FC = () => {
       })
       dispatch(setActiveFilePath(undefined))
     }
-  }, [notesTree, activeFilePath, activeNode, dispatch])
+  }, [notesTree, activeFilePath, activeNode, dispatch, operationManager])
 
   useEffect(() => {
     if (!notesPath || notesTree.length === 0) return
@@ -181,6 +209,17 @@ const NotesPage: FC = () => {
         try {
           if (!notesPath) return
           const { eventType, filePath } = data
+
+          // Skip file system events during pending operations to prevent conflicts
+          if (operationManager.hasPendingOperations()) {
+            logger.debug('Skipping file watcher event during pending operations:', {
+              eventType,
+              filePath,
+              pendingCount: pendingOperationsRef.current.size,
+              operations: Array.from(pendingOperationsRef.current)
+            })
+            return
+          }
 
           switch (eventType) {
             case 'change': {
@@ -279,7 +318,8 @@ const NotesPage: FC = () => {
     currentContent,
     debouncedSave,
     saveCurrentNote,
-    sortType
+    sortType,
+    operationManager
   ])
 
   useEffect(() => {
@@ -332,39 +372,40 @@ const NotesPage: FC = () => {
         if (!targetPath) {
           throw new Error('No folder path selected')
         }
-        await createFolder(name, targetPath)
+
+        await operationManager.withOperation(`createFolder:${name}`, async () => {
+          await createFolder(name, targetPath)
+          await sortAllLevels(sortType)
+        })
       } catch (error) {
         logger.error('Failed to create folder:', error as Error)
       }
     },
-    [getTargetFolderPath]
+    [getTargetFolderPath, sortType, operationManager]
   )
 
   // 创建笔记
   const handleCreateNote = useCallback(
     async (name: string) => {
       try {
-        isCreatingNoteRef.current = true
-
         const targetPath = getTargetFolderPath()
         if (!targetPath) {
           throw new Error('No folder path selected')
         }
-        const newNote = await createNote(name, '', targetPath)
+
+        const newNote = await operationManager.withOperation(`createNote:${name}`, async () => {
+          const note = await createNote(name, '', targetPath)
+          await sortAllLevels(sortType)
+          return note
+        })
+
         dispatch(setActiveFilePath(newNote.externalPath))
         setSelectedFolderId(null)
-
-        await sortAllLevels(sortType)
       } catch (error) {
         logger.error('Failed to create note:', error as Error)
-      } finally {
-        // 延迟重置标志，给数据库同步一些时间
-        setTimeout(() => {
-          isCreatingNoteRef.current = false
-        }, 500)
       }
     },
-    [dispatch, getTargetFolderPath, sortType]
+    [dispatch, getTargetFolderPath, sortType, operationManager]
   )
 
   // 切换展开状态
@@ -485,15 +526,19 @@ const NotesPage: FC = () => {
   const handleRenameNode = useCallback(
     async (nodeId: string, newName: string) => {
       try {
-        isRenamingRef.current = true
-
         const tree = await getNotesTree()
         const node = findNodeById(tree, nodeId)
 
         if (node && node.name !== newName) {
           const oldExternalPath = node.externalPath
-          const renamedNode = await renameNode(nodeId, newName)
 
+          const renamedNode = await operationManager.withOperation(`renameNode:${nodeId}:${newName}`, async () => {
+            const renamed = await renameNode(nodeId, newName)
+            await sortAllLevels(sortType)
+            return renamed
+          })
+
+          // 更新活动文件路径
           if (renamedNode.type === 'file' && activeFilePath === oldExternalPath) {
             dispatch(setActiveFilePath(renamedNode.externalPath))
           } else if (
@@ -505,20 +550,16 @@ const NotesPage: FC = () => {
             const newFilePath = renamedNode.externalPath + relativePath
             dispatch(setActiveFilePath(newFilePath))
           }
-          await sortAllLevels(sortType)
+
           if (renamedNode.name !== newName) {
             window.toast.info(t('notes.rename_changed', { original: newName, final: renamedNode.name }))
           }
         }
       } catch (error) {
         logger.error('Failed to rename node:', error as Error)
-      } finally {
-        setTimeout(() => {
-          isRenamingRef.current = false
-        }, 500)
       }
     },
-    [activeFilePath, dispatch, findNodeById, sortType, t]
+    [activeFilePath, dispatch, findNodeById, sortType, t, operationManager]
   )
 
   // 处理文件上传
