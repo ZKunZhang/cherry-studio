@@ -312,7 +312,9 @@ const PopupContainer: React.FC<Props> = ({ source, title, resolve }) => {
       logger.error('save failed:', error as Error)
 
       // Provide more specific error messages
-      let errorMessage = t(isTopicMode ? 'chat.save.topic.knowledge.error.save_failed' : 'chat.save.knowledge.error.save_failed')
+      let errorMessage = t(
+        isTopicMode ? 'chat.save.topic.knowledge.error.save_failed' : 'chat.save.knowledge.error.save_failed'
+      )
 
       if (error instanceof Error) {
         if (error.message.includes('not properly configured')) {
