@@ -55,11 +55,11 @@ const NotesPage: FC = () => {
   const lastContentRef = useRef<string>('')
   const lastFilePathRef = useRef<string | undefined>(undefined)
   const isInitialSortApplied = useRef(false)
-  // 操作状态管理 - 统一管理所有可能干扰文件监听的操作
+  // Operation state management - unified tracking of operations that may interfere with file watching
   const pendingOperationsRef = useRef(new Set<string>())
 
-  // 操作管理工具函数
-  const createOperationManager = useCallback(() => {
+  // Operation manager utility functions - use useMemo to ensure stable reference
+  const operationManager = useMemo(() => {
     const addOperation = (operationId: string) => {
       pendingOperationsRef.current.add(operationId)
       logger.debug('Operation started:', { operationId, totalOperations: pendingOperationsRef.current.size })
@@ -82,9 +82,7 @@ const NotesPage: FC = () => {
     }
 
     return { addOperation, removeOperation, hasPendingOperations, withOperation }
-  }, [])
-
-  const operationManager = createOperationManager()
+  }, []) // Empty dependency array since all references are stable
 
   useEffect(() => {
     const updateCharCount = () => {
@@ -177,11 +175,11 @@ const NotesPage: FC = () => {
     applyInitialSort()
   }, [notesTree.length, sortType])
 
-  // 处理树同步时的状态管理
+  // Handle state management during tree synchronization
   useEffect(() => {
     if (notesTree.length === 0) return
-    // 如果有activeFilePath但找不到对应节点，清空选择
-    // 但要排除正在同步树结构或有待处理操作的情况，避免在这些操作中误清空
+    // Clear activeFilePath if corresponding node is not found
+    // But exclude cases where tree sync or pending operations are in progress to avoid incorrect clearing
     const shouldClearPath =
       activeFilePath && !activeNode && !isSyncingTreeRef.current && !operationManager.hasPendingOperations()
 
@@ -204,15 +202,17 @@ const NotesPage: FC = () => {
         watcherRef.current = null
       }
 
-      // 定义文件变化处理函数
+      // Define file change handler function
       const handleFileChange = async (data: FileChangeEvent) => {
         try {
           if (!notesPath) return
           const { eventType, filePath } = data
 
-          // Skip file system events during pending operations to prevent conflicts
-          if (operationManager.hasPendingOperations()) {
-            logger.debug('Skipping file watcher event during pending operations:', {
+          // Skip file system events that could conflict with pending operations
+          // Only block structural changes (add/delete/rename), allow content changes
+          const isStructuralEvent = ['add', 'addDir', 'unlink', 'unlinkDir'].includes(eventType)
+          if (isStructuralEvent && operationManager.hasPendingOperations()) {
+            logger.debug('Skipping structural file event during pending operations:', {
               eventType,
               filePath,
               pendingCount: pendingOperationsRef.current.size,
@@ -223,24 +223,24 @@ const NotesPage: FC = () => {
 
           switch (eventType) {
             case 'change': {
-              // 处理文件内容变化 - 只有内容真正改变时才触发更新
+              // Handle file content changes - only trigger updates when content actually changes
               if (activeFilePath === filePath) {
                 try {
-                  // 读取文件最新内容
+                  // Read latest file content
                   // const newFileContent = await window.api.file.readExternal(filePath)
-                  // // 获取当前编辑器/缓存中的内容
+                  // // Get current editor/cached content
                   // const currentEditorContent = editorRef.current?.getMarkdown()
-                  // // 如果编辑器还未初始化完成，忽略FileWatcher事件
+                  // // Ignore FileWatcher events if editor is not initialized
                   // if (!isEditorInitialized.current) {
                   //   return
                   // }
-                  // // 比较内容是否真正发生变化
+                  // // Compare if content actually changed
                   // if (newFileContent.trim() !== currentEditorContent?.trim()) {
                   //   invalidateFileContent(filePath)
                   // }
                 } catch (error) {
                   logger.error('Failed to read file for content comparison:', error as Error)
-                  // 读取失败时，还是执行原来的逻辑
+                  // On read failure, fall back to original logic
                   invalidateFileContent(filePath)
                 }
               } else {
@@ -253,7 +253,7 @@ const NotesPage: FC = () => {
             case 'addDir':
             case 'unlink':
             case 'unlinkDir': {
-              // 如果删除的是当前活动文件，清空选择
+              // Clear selection if the deleted file is the currently active file
               if ((eventType === 'unlink' || eventType === 'unlinkDir') && activeFilePath === filePath) {
                 dispatch(setActiveFilePath(undefined))
               }
