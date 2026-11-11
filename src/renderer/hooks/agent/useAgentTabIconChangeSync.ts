@@ -53,7 +53,12 @@ export function useAgentTabIconChangeSync(): void {
             })
             agents.set(session.agentId, agent)
           }
-          const avatar = (await agent).configuration?.avatar || undefined
+          const agentRow = await agent
+          // A session may be reassigned while the agent read is in flight. Do not
+          // apply the old owner's avatar to the tab after that binding changes.
+          const latestSession = await dataApiService.get(`/agent-sessions/${sessionId}`)
+          if (latestSession.agentId !== session.agentId) return
+          const avatar = agentRow.configuration?.avatar || undefined
           const icon = avatar && isEmoji(avatar) ? emojiTabIcon(avatar) : avatar
           const latest = contextRef.current
           if (!lifecycle.mounted || lifecycle.revision !== revision || !latest) return

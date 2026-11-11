@@ -225,6 +225,26 @@ describe('useAgentTabIconChangeSync', () => {
     expect(screen.getByLabelText('c')).toHaveTextContent('emoji:🐶')
   })
 
+  it('does not apply the previous agent avatar after a session is reassigned', async () => {
+    const pendingAgent = deferred<{ configuration: { avatar: string } }>()
+    let sessionReads = 0
+    vi.mocked(dataApiService.get).mockImplementation(async (path) => {
+      if (path === '/agent-sessions/a') {
+        sessionReads++
+        return { agentId: sessionReads === 1 ? 'agent' : 'other-agent' } as never
+      }
+      if (path === '/agents/agent') return pendingAgent.promise as never
+      throw new Error(`Unexpected request: ${path}`)
+    })
+    mount([work('a')])
+
+    await changed()
+    await act(async () => pendingAgent.resolve({ configuration: { avatar: '🐶' } }))
+
+    expect(sessionReads).toBe(2)
+    expect(screen.getByLabelText('a')).toHaveTextContent('emoji:🐱')
+  })
+
   it('retains both agents newest icons when different-agent edit batches resolve out of order', async () => {
     const user = userEvent.setup()
     const older = deferred<{ name: string; configuration: { avatar: string } }>()
