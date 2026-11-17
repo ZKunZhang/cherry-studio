@@ -268,9 +268,12 @@ export class PiDurableRuntimeConnection implements AgentRuntimeConnection {
         active: results.status !== 'confirmed' || results.value.active
       })
       if (batch.completion && !this.compacting && !this.closing && this.sending) {
-        const failed = batch.completion.inputs.find((input) => input.outcome && input.outcome !== 'completed')
+        const failed = batch.completion.inputs.find(
+          (input) => input.outcome && input.outcome !== 'completed' && input.outcome !== 'aborted'
+        )
+        const aborted = batch.completion.inputs.some((input) => input.outcome === 'aborted')
         if (failed) this.failure ??= new Error(failed.error?.message ?? failed.outcome)
-        this.finishTurn(batch.completion.entryId)
+        if (!aborted || failed) this.finishTurn(batch.completion.entryId)
       }
     } catch (error) {
       this.fail(error)

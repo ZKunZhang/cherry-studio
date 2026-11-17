@@ -1654,7 +1654,12 @@ describe('desktop Pi Durable connection', () => {
     const user = message('work')
     await first.connection.send({ message: user })
     await held.reached
-    if (action === 'stop') await first.connection.interrupt()
+    if (action === 'stop') {
+      await first.connection.interrupt()
+      await expect.poll(() => first.nativeInputs.some((state) => state.inputId === user.id && state.outcome === 'aborted'))
+        .toBe(true)
+      expect(first.events.filter((event) => event.type === 'error' || event.type === 'turn-complete')).toEqual([])
+    }
     await first.connection.close()
     setScript([assistantReply('recovered answer')])
     const reopened = await connect()
@@ -1665,6 +1670,7 @@ describe('desktop Pi Durable connection', () => {
       await reopened.connection.close()
       expect(script.calls).toHaveLength(0)
       expect(first.nativeInputs.some((state) => state.inputId === user.id && state.outcome === 'aborted')).toBe(true)
+      expect(first.events.filter((event) => event.type === 'error' || event.type === 'turn-complete')).toEqual([])
     }
   })
 
